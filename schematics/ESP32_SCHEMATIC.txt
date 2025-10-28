@@ -1,0 +1,316 @@
+# Esquema de Ligação do ESP32 - ArdPix
+
+## Lista de Componentes
+
+- 1x ESP32 DevKit (NodeMCU ou similar)
+- 1x Buzzer Ativo 5V
+- 2x LEDs 5mm (1 verde, 1 vermelho)
+- 2x Resistores 220Ω (1/4W)
+- 1x Protoboard 400 pontos
+- Jumpers macho-macho
+
+## Esquema de Ligação
+
+```
+                           ESP32 DevKit
+                    ┌─────────────────────┐
+                    │                     │
+                    │        [ ]          │  USB (Programação)
+                    │                     │
+     3.3V ──────────┤ 3V3                 │
+     GND  ──────────┤ GND            EN   │
+                    │ D15           VP36  │
+                    │ D2 (LED)      VN39  │
+                    │ D4 (BUZZER)   D34   │
+                    │ RX2           D35   │
+                    │ TX2           D32   │
+     LED VERDE ─────┤ D5            D33   │
+                    │ D18 (LED VERM) D25  │
+                    │ D19           D26   │
+                    │ D21           D27   │
+                    │ RX0           D14   │
+                    │ TX0           D12   │
+                    │ D22           D13   │
+                    │ D23           GND   │
+     GND  ──────────┤ GND           VIN   │
+                    │                     │
+                    └─────────────────────┘
+
+## Detalhamento das Conexões
+
+### 1. LED Interno (GPIO 2)
+┌────────┐
+│  ESP32 │
+│        │
+│  GPIO2 ├─────► LED interno (built-in no módulo)
+│        │
+└────────┘
+
+### 2. Buzzer (GPIO 4)
+┌────────┐              ┌─────────────┐
+│  ESP32 │              │   Buzzer    │
+│        │              │   Ativo 5V  │
+│  GPIO4 ├──────────────┤ + (Positivo)│
+│        │              │             │
+│  GND   ├──────────────┤ - (Negativo)│
+│        │              └─────────────┘
+└────────┘
+
+Nota: Se o buzzer for muito alto, adicione resistor 100-220Ω em série.
+
+### 3. LED Verde de Status (GPIO 5)
+┌────────┐      ┌────────┐      ┌──────┐
+│  ESP32 │      │ 220Ω   │      │ LED  │
+│        │      │        │      │Verde │
+│  GPIO5 ├──────┤ Resist.├──────┤ +    │
+│        │      └────────┘      │      │
+│        │                      │      │
+│  GND   ├──────────────────────┤ -    │
+│        │                      └──────┘
+└────────┘
+
+Cálculo da resistência:
+V_ESP32 = 3.3V
+V_LED = 2.0V (típico LED verde)
+I_LED = 10mA (corrente desejada)
+R = (3.3 - 2.0) / 0.010 = 130Ω
+Usar resistor comercial: 220Ω (limita corrente a ~6mA, seguro)
+
+### 4. LED Vermelho de Erro (GPIO 18)
+┌────────┐      ┌────────┐      ┌──────┐
+│  ESP32 │      │ 220Ω   │      │ LED  │
+│        │      │        │      │Vermel│
+│  GPIO18├──────┤ Resist.├──────┤ +    │
+│        │      └────────┘      │      │
+│        │                      │      │
+│  GND   ├──────────────────────┤ -    │
+│        │                      └──────┘
+└────────┘
+
+## Montagem na Protoboard
+
+Vista Superior da Protoboard:
+```
+     1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
+   ┌────────────────────────────────────────────┐
+ + │ ●──●──●──●──●──●──●──●──●──●──●──●──●──●──● │ + (Vcc - não usado)
+   │                                            │
+ - │ ●──●──●──●──●──●──●──●──●──●──●──●──●──●──● │ - (GND)
+   │                                            │
+   ├────────────────────────────────────────────┤
+ a │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ b │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ c │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ d │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ e │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+   │                                            │
+   │          ┌──────────────┐                  │
+   │          │              │                  │
+   │          │    ESP32     │                  │
+   │          │   DevKit     │                  │
+   │          │              │                  │
+   │          └──────────────┘                  │
+   │                                            │
+ f │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ g │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ h │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ i │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+ j │ ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ● │
+   ├────────────────────────────────────────────┤
+   │                                            │
+ + │ ●──●──●──●──●──●──●──●──●──●──●──●──●──●──● │ + (Vcc)
+   │                                            │
+ - │ ●──●──●──●──●──●──●──●──●──●──●──●──●──●──● │ - (GND)
+   │                                            │
+   └────────────────────────────────────────────┘
+
+Posicionamento dos componentes:
+- ESP32: Centro da protoboard (linhas d-g)
+- LED Verde + Resistor: Coluna 12-15, linha h-j
+- LED Vermelho + Resistor: Coluna 12-15, linha a-c
+- Buzzer: Coluna 1-3, linha h-j
+- Jumpers conectam GPIO aos componentes
+```
+
+## Instruções de Montagem
+
+### Passo 1: Preparar Protoboard
+1. Conecte a trilha GND (-) a um ponto comum
+2. Não use a trilha Vcc (+) neste projeto
+
+### Passo 2: Montar ESP32
+1. Insira o ESP32 no centro da protoboard
+2. Certifique-se de deixar espaço nas laterais
+3. Pressione firmemente para fazer contato
+
+### Passo 3: LED Verde (Status)
+1. Identifique o pino longo do LED (anodo +)
+2. Insira o LED na protoboard:
+   - Pino longo em uma linha
+   - Pino curto na linha do GND ou próximo
+3. Conecte resistor 220Ω:
+   - Um lado ao pino longo do LED
+   - Outro lado livre
+4. Conecte jumper:
+   - Do GPIO 5 ao resistor
+   - Do pino curto do LED ao GND
+
+### Passo 4: LED Vermelho (Erro)
+1. Repita o processo do LED verde
+2. Use GPIO 18 ao invés de GPIO 5
+
+### Passo 5: Buzzer
+1. Identifique os pinos do buzzer
+   - Pino com marcação "+" ou lado com adesivo = positivo
+2. Conecte:
+   - Positivo (+) ao GPIO 4
+   - Negativo (-) ao GND
+
+### Passo 6: Verificar Conexões
+Use multímetro para verificar:
+- GND está conectado corretamente
+- Não há curto-circuito entre pinos
+- Resistores estão no valor correto (220Ω)
+
+### Passo 7: Programar ESP32
+1. Conecte cabo USB ao computador
+2. Faça upload do código
+3. Abra Serial Monitor
+4. Verifique mensagens de boot
+
+### Passo 8: Testar
+1. WiFi conectou? → LED verde deve acender
+2. MQTT conectou? → Buzzer deve apitar 1 vez
+3. Recebeu pagamento? → LED pisca, buzzer apita
+
+## Troubleshooting
+
+### LEDs não acendem
+- Verifique polaridade (pino longo = +)
+- Verifique resistor está conectado
+- Teste LED com multímetro
+- Verifique código (pinMode, digitalWrite)
+
+### Buzzer não apita
+- Verifique se é buzzer ativo (não passivo)
+- Teste com 3.3V direto do ESP32
+- Verifique polaridade
+- Tente outro pino GPIO
+
+### ESP32 não liga
+- Verifique alimentação USB
+- Tente outro cabo USB
+- Verifique se ESP32 está bem encaixado
+- Teste em outra porta USB
+
+### Programa não carrega
+- Pressione botão BOOT durante upload
+- Verifique porta COM/ttyUSB correta
+- Verifique driver CH340/CP2102 instalado
+- Tente velocidade menor (115200 → 9600)
+
+## Especificações Técnicas
+
+### ESP32
+- Tensão de operação: 3.3V
+- Corrente máxima por pino: 12mA (recomendado)
+- Corrente máxima total: 200mA
+
+### LEDs
+- Tensão forward: ~2.0V (verde), ~1.8V (vermelho)
+- Corrente recomendada: 5-10mA
+- Corrente máxima: 20mA
+
+### Buzzer
+- Tensão: 3-5V
+- Corrente: ~30mA
+- Frequência: ~2kHz (buzzer ativo)
+
+### Resistores
+- Valor: 220Ω
+- Potência: 1/4W
+- Tolerância: 5% (ouro)
+
+## Código de Cores dos Resistores
+
+220Ω = Vermelho, Vermelho, Marrom, Ouro
+```
+┌─────────────┐
+│ ▓▓▓░░▓░░    │
+│ ▓▓▓░░▓░░    │
+│ ▓▓▓░░▓░░ ██ │
+│ ▓▓▓░░▓░░    │
+│ ▓▓▓░░▓░░    │
+└─────────────┘
+  │ │ │   │
+  │ │ │   └─── Ouro (5%)
+  │ │ └─────── Marrom (×10)
+  │ └───────── Vermelho (2)
+  └─────────── Vermelho (2)
+
+  22 × 10 = 220Ω
+```
+
+## Diagrama Elétrico Simplificado
+
+```
+        3.3V
+         │
+         │
+    ┌────┴────┐
+    │  ESP32  │
+    │         │
+    │  GPIO5──┼────[220Ω]────┤►├────┐
+    │         │            LED Verde │
+    │  GPIO18─┼────[220Ω]────┤►├────┤
+    │         │            LED Verme │
+    │  GPIO4──┼──────────────[BUZZER]┤
+    │         │                      │
+    │  GND────┼──────────────────────┘
+    │         │
+    └─────────┘
+```
+
+## Fotos de Referência
+
+(Adicione fotos do seu projeto montado aqui)
+
+1. Vista geral do projeto
+2. Close-up das conexões
+3. ESP32 com LEDs acesos
+4. Detalhe dos resistores
+
+## Melhorias Opcionais
+
+### 1. Display OLED (I2C)
+- SDA → GPIO 21
+- SCL → GPIO 22
+- VCC → 3.3V
+- GND → GND
+
+### 2. Botão de Teste
+- Um lado → GPIO 15
+- Outro lado → GND
+- Resistor pull-up interno
+
+### 3. Sensor DHT11 (Temperatura)
+- VCC → 3.3V
+- DATA → GPIO 23
+- GND → GND
+
+## Checklist Final
+
+- [ ] Todos componentes soldados/conectados
+- [ ] Polaridade dos LEDs verificada
+- [ ] Resistores do valor correto
+- [ ] Conexões firmes na protoboard
+- [ ] Código carregado no ESP32
+- [ ] WiFi configurado no código
+- [ ] MQTT broker rodando
+- [ ] Teste de LEDs funcionando
+- [ ] Teste de buzzer funcionando
+- [ ] Comunicação MQTT estabelecida
+
+---
+
+**Dica:** Tire fotos durante a montagem para documentar no relatório!

@@ -1,0 +1,17 @@
+# Flask e extensões
+Flask==3.0.0
+flask-socketio==5.3.6
+
+# MQTT
+paho-mqtt==1.6.1
+
+# WebSocket
+python-socketio==5.10.0
+python-engineio==4.8.0
+
+# Utilitários
+python-dotenv==1.0.0
+eventlet==0.33.3
+
+# Opcional - para produção
+gunicorn==21.2.0

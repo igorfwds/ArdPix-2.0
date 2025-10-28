@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArdPix - Dashboard de Pagamentos</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- Chart.js desabilitado temporariamente para performance -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> -->
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ArdPix - Sistema de Pagamentos IoT</h1>
+            <p class="subtitle">Dashboard em Tempo Real</p>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="label">Status ESP32:</span>
+                <span id="esp32-status" class="status-badge disconnected">Desconectado</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Última atualização:</span>
+                <span id="last-update">-</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Fila ESP32:</span>
+                <span id="queue-size" class="badge">0</span>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Card de Saldo -->
+            <div class="card balance-card">
+                <h2>Saldo Disponível</h2>
+                <div class="balance-amount" id="balance-amount">R$ 0,00</div>
+                <div class="balance-info">
+                    <span>Última atualização: <span id="balance-update">-</span></span>
+                </div>
+            </div>
+
+            <!-- Card de Estatísticas -->
+            <div class="card stats-card">
+                <h2>Estatísticas</h2>
+                <div class="stat-item">
+                    <span class="stat-label">Total de Transações:</span>
+                    <span class="stat-value" id="total-transactions">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Pagamentos Hoje:</span>
+                    <span class="stat-value" id="payments-today">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Valor Total Hoje:</span>
+                    <span class="stat-value" id="total-today">R$ 0,00</span>
+                </div>
+            </div>
+
+            <!-- Gráfico de Pagamentos (DESABILITADO TEMPORARIAMENTE) -->
+            <div class="card chart-card" style="display: none;">
+                <h2>Pagamentos Recentes</h2>
+                <canvas id="paymentsChart"></canvas>
+            </div>
+
+            <!-- Histórico de Transações -->
+            <div class="card transactions-card">
+                <h2>Últimas Transações</h2>
+                <div class="transaction-list" id="transaction-list">
+                    <p class="empty-state">Nenhuma transação ainda...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notificações -->
+        <div id="notification-container"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
