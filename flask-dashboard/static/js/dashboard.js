@@ -368,8 +368,137 @@ socket.on('withdraw_update', (withdraw) => {
     }
 });
 
-// Inicializar quando a página carregar
+// Criar pagamento PIX
+async function createPixPayment(amount, description) {
+    try {
+        const response = await fetch('/api/create-pix-payment', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                amount: parseFloat(amount),
+                description: description || 'Pagamento ArdPix'
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Erro ao criar pagamento');
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Erro ao criar pagamento PIX:', error);
+        throw error;
+    }
+}
+
+// Mostrar modal com QR Code
+function showQRCodeModal(paymentData) {
+    const modal = document.getElementById('qrcode-modal');
+    const qrImage = document.getElementById('qrcode-image');
+    const qrAmount = document.getElementById('qr-amount');
+    const qrPaymentId = document.getElementById('qr-payment-id');
+    const qrExpiresAt = document.getElementById('qr-expires-at');
+    const qrStatus = document.getElementById('qr-status');
+    const brCodeText = document.getElementById('brcode-text');
+
+    console.log('Payment data:', paymentData); // Debug
+
+    // Atualizar conteúdo do modal
+    // brCodeBase64 já vem com o prefixo data:image/png;base64,
+    qrImage.src = paymentData.qrCodeBase64 || '';
+    qrAmount.textContent = formatCurrency(paymentData.amount || 0);
+    qrPaymentId.textContent = paymentData.id || 'N/A';
+    qrExpiresAt.textContent = formatDateTime(paymentData.expiresAt);
+    qrStatus.textContent = paymentData.status || 'AGUARDANDO';
+    brCodeText.value = paymentData.brCode || '';
+
+    // Mostrar modal
+    modal.style.display = 'flex';
+}
+
+// Fechar modal
+function closeQRCodeModal() {
+    const modal = document.getElementById('qrcode-modal');
+    modal.style.display = 'none';
+}
+
+// Copiar código BR (PIX Copia e Cola)
+function copyBRCode() {
+    const brCodeText = document.getElementById('brcode-text');
+    brCodeText.select();
+    brCodeText.setSelectionRange(0, 99999); // Para mobile
+
+    try {
+        document.execCommand('copy');
+        showNotification('Copiado!', 'Código PIX copiado para área de transferência', 'success');
+    } catch (err) {
+        // Fallback para navegadores modernos
+        navigator.clipboard.writeText(brCodeText.value).then(() => {
+            showNotification('Copiado!', 'Código PIX copiado para área de transferência', 'success');
+        }).catch(() => {
+            showNotification('Erro', 'Falha ao copiar código PIX', 'error');
+        });
+    }
+}
+
+// Handler do formulário de criação de pagamento
 document.addEventListener('DOMContentLoaded', () => {
     initChart();
     loadInitialData();
+
+    const createPaymentForm = document.getElementById('create-payment-form');
+    const createPaymentBtn = document.getElementById('create-payment-btn');
+    const paymentLoading = document.getElementById('payment-loading');
+
+    createPaymentForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const amount = document.getElementById('payment-amount').value;
+        const description = document.getElementById('payment-description').value;
+
+        // Validar valor
+        if (!amount || parseFloat(amount) <= 0) {
+            showNotification('Erro', 'Por favor, insira um valor válido', 'error');
+            return;
+        }
+
+        // Mostrar loading
+        createPaymentBtn.disabled = true;
+        paymentLoading.style.display = 'block';
+
+        try {
+            const paymentData = await createPixPayment(amount, description);
+
+            // Esconder loading
+            paymentLoading.style.display = 'none';
+            createPaymentBtn.disabled = false;
+
+            // Limpar formulário
+            createPaymentForm.reset();
+
+            // Mostrar modal com QR Code
+            showQRCodeModal(paymentData);
+
+            showNotification('Sucesso!', 'QR Code PIX gerado com sucesso', 'success');
+
+        } catch (error) {
+            // Esconder loading
+            paymentLoading.style.display = 'none';
+            createPaymentBtn.disabled = false;
+
+            showNotification('Erro', error.message || 'Falha ao gerar QR Code PIX', 'error');
+        }
+    });
+
+    // Fechar modal ao clicar fora
+    const modal = document.getElementById('qrcode-modal');
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeQRCodeModal();
+        }
+    });
 });

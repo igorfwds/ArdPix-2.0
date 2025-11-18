@@ -20,8 +20,8 @@
 // ===================== CONFIGURAÇÕES =====================
 
 // WiFi
-const char* WIFI_SSID = "Igor Wanderley";
-const char* WIFI_PASSWORD = "deumaoito";
+const char* WIFI_SSID = "iPhone de Cláudio";
+const char* WIFI_PASSWORD = "cc123456";
 
 // MQTT Broker (HiveMQ Cloud)
 const char* MQTT_BROKER = "e804c2fdeb734bf2bbd47edfe90fc9b1.s1.eu.hivemq.cloud";

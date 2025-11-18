@@ -9,6 +9,7 @@ from collections import deque
 import os
 import threading
 import ssl
+import requests
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'ardpix-secret-key-change-me')
@@ -23,6 +24,10 @@ MQTT_USE_TLS = os.getenv('MQTT_USE_TLS', 'True').lower() == 'true'
 MQTT_TOPIC_PAYMENT = 'ardpix/payment'
 MQTT_TOPIC_STATUS = 'ardpix/status'
 MQTT_TOPIC_QUEUE = 'ardpix/queue'
+
+# AbacatePay API
+ABACATEPAY_API_KEY = os.getenv('ABACATEPAY_API_KEY', 'abc_prod_06pQKYs0XTpZFnwBSk1MHtbf')
+ABACATEPAY_API_URL = 'https://api.abacatepay.com/v1'
 
 # Armazenamento de dados em memória
 payment_history = deque(maxlen=100)  # Últimas 100 transações
@@ -249,6 +254,74 @@ def get_esp32_status():
 def get_queue():
     """Retorna fila de pagamentos"""
     return jsonify(list(payment_queue))
+
+@app.route('/api/create-pix-payment', methods=['POST'])
+def create_pix_payment():
+    """Cria um novo pagamento PIX via AbacatePay"""
+    try:
+        data = request.json
+        amount = data.get('amount')  # Valor em reais
+        description = data.get('description', 'Pagamento ArdPix')
+        expires_in = data.get('expiresIn', 3600)  # 1 hora por padrão
+
+        if not amount or amount <= 0:
+            return jsonify({'error': 'Valor inválido'}), 400
+
+        # Converter valor de reais para centavos
+        amount_cents = int(amount * 100)
+
+        # Preparar payload para API do AbacatePay
+        payload = {
+            'amount': amount_cents,
+            'description': description,
+            'expiresIn': expires_in
+        }
+
+        # Fazer requisição para API do AbacatePay
+        headers = {
+            'Authorization': f'Bearer {ABACATEPAY_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(
+            f'{ABACATEPAY_API_URL}/pixQrCode/create',
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code == 201 or response.status_code == 200:
+            result = response.json()
+            print(f"Resposta da API AbacatePay: {result}")  # Log para debug
+
+            # A resposta vem dentro do objeto 'data'
+            data = result.get('data', {})
+
+            payment_data = {
+                'id': data.get('id'),
+                'amount': amount,
+                'qrCodeBase64': data.get('brCodeBase64'),  # Nome correto do campo
+                'brCode': data.get('brCode'),
+                'expiresAt': data.get('expiresAt'),
+                'status': data.get('status'),
+                'createdAt': data.get('createdAt', datetime.now().isoformat())
+            }
+
+            print(f"Pagamento PIX criado: {payment_data['id']} - R$ {amount:.2f}")
+
+            return jsonify(payment_data), 201
+        else:
+            result = response.json()
+            error_msg = result.get('error', 'Erro ao criar pagamento')
+            print(f"Erro ao criar pagamento PIX: {response.status_code} - {error_msg}")
+            return jsonify({'error': error_msg}), response.status_code
+
+    except requests.exceptions.RequestException as e:
+        print(f"Erro de conexão com AbacatePay API: {e}")
+        return jsonify({'error': 'Erro de conexão com API de pagamentos'}), 500
+    except Exception as e:
+        print(f"Erro ao criar pagamento: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @socketio.on('connect')
 def handle_connect():
