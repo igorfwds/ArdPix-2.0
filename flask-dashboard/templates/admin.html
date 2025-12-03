@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArdPix - Admin</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #fff;
+        }
+
+        .header h1 {
+            font-size: 32px;
+        }
+
+        .back-link {
+            background: #fff;
+            color: #000;
+            padding: 10px 20px;
+            text-decoration: none;
+            border: 2px solid #fff;
+        }
+
+        .back-link:hover {
+            background: #000;
+            color: #fff;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            border: 2px solid #fff;
+            padding: 20px;
+        }
+
+        .stat-card h3 {
+            font-size: 14px;
+            opacity: 0.7;
+            margin-bottom: 10px;
+        }
+
+        .stat-card .value {
+            font-size: 36px;
+            font-weight: bold;
+        }
+
+        .transactions-section {
+            margin-top: 40px;
+        }
+
+        .transactions-section h2 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #fff;
+        }
+
+        .transaction-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .transaction-table th {
+            text-align: left;
+            padding: 15px 10px;
+            border-bottom: 2px solid #fff;
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .transaction-table td {
+            padding: 15px 10px;
+            border-bottom: 1px solid #333;
+        }
+
+        .transaction-table tr:hover {
+            background: #111;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            opacity: 0.5;
+            font-size: 18px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            font-size: 12px;
+            border: 1px solid #fff;
+        }
+
+        .status-badge.paid {
+            color: #0f0;
+            border-color: #0f0;
+        }
+
+        .status-badge.pending {
+            color: #ff0;
+            border-color: #ff0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>PAINEL ADMINISTRATIVO</h1>
+        <a href="/" class="back-link">VOLTAR</a>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>TOTAL RECEBIDO</h3>
+            <div class="value" id="total-received">R$ 0,00</div>
+        </div>
+
+        <div class="stat-card">
+            <h3>TRANSAÇÕES HOJE</h3>
+            <div class="value" id="transactions-today">0</div>
+        </div>
+
+        <div class="stat-card">
+            <h3>TOTAL HOJE</h3>
+            <div class="value" id="total-today">R$ 0,00</div>
+        </div>
+
+        <div class="stat-card">
+            <h3>TOTAL TRANSAÇÕES</h3>
+            <div class="value" id="total-transactions">0</div>
+        </div>
+    </div>
+
+    <div class="transactions-section">
+        <h2>HISTÓRICO DE TRANSAÇÕES</h2>
+        <table class="transaction-table" id="transactions-table">
+            <thead>
+                <tr>
+                    <th>DATA/HORA</th>
+                    <th>VALOR</th>
+                    <th>STATUS</th>
+                    <th>ID</th>
+                </tr>
+            </thead>
+            <tbody id="transactions-body">
+                <tr>
+                    <td colspan="4" class="empty-state">Nenhuma transação registrada</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const socket = io();
+
+        // Carregar dados iniciais
+        async function loadData() {
+            try {
+                // Carregar transações
+                const paymentsResponse = await fetch('/api/payments');
+                const payments = await paymentsResponse.json();
+
+                // Carregar saldo
+                const balanceResponse = await fetch('/api/balance');
+                const balance = await balanceResponse.json();
+
+                updateStats(payments, balance);
+                updateTransactionsTable(payments);
+            } catch (error) {
+                console.error('Erro ao carregar dados:', error);
+            }
+        }
+
+        function updateStats(payments, balance) {
+            // Total recebido
+            document.getElementById('total-received').textContent =
+                `R$ ${(balance.total || 0).toFixed(2).replace('.', ',')}`;
+
+            // Total de transações
+            document.getElementById('total-transactions').textContent = payments.length;
+
+            // Transações e total de hoje
+            const today = new Date().toDateString();
+            const todayPayments = payments.filter(p => {
+                const paymentDate = new Date(p.timestamp).toDateString();
+                return paymentDate === today;
+            });
+
+            document.getElementById('transactions-today').textContent = todayPayments.length;
+
+            const todayTotal = todayPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+            document.getElementById('total-today').textContent =
+                `R$ ${todayTotal.toFixed(2).replace('.', ',')}`;
+        }
+
+        function updateTransactionsTable(payments) {
+            const tbody = document.getElementById('transactions-body');
+
+            if (payments.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="empty-state">Nenhuma transação registrada</td></tr>';
+                return;
+            }
+
+            // Ordenar por data (mais recente primeiro)
+            const sortedPayments = [...payments].sort((a, b) =>
+                new Date(b.timestamp) - new Date(a.timestamp)
+            );
+
+            tbody.innerHTML = sortedPayments.map(payment => {
+                const date = new Date(payment.timestamp);
+                const dateStr = date.toLocaleDateString('pt-BR');
+                const timeStr = date.toLocaleTimeString('pt-BR');
+
+                const statusClass = payment.status === 'paid' ? 'paid' : 'pending';
+                const statusText = payment.status === 'paid' ? 'PAGO' : 'PENDENTE';
+
+                return `
+                    <tr>
+                        <td>${dateStr} ${timeStr}</td>
+                        <td>R$ ${(payment.amount || 0).toFixed(2).replace('.', ',')}</td>
+                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                        <td>${payment.id || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Atualizar em tempo real
+        socket.on('new_payment', function(payment) {
+            console.log('Novo pagamento:', payment);
+            loadData(); // Recarregar todos os dados
+        });
+
+        socket.on('balance_update', function(balance) {
+            document.getElementById('total-received').textContent =
+                `R$ ${(balance.total || 0).toFixed(2).replace('.', ',')}`;
+        });
+
+        // Carregar dados ao iniciar
+        loadData();
+
+        // Atualizar a cada 30 segundos
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>

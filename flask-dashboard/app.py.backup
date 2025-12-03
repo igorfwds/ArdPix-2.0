@@ -1,0 +1,517 @@
+from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
+import paho.mqtt.client as mqtt
+import hmac
+import hashlib
+import json
+from datetime import datetime
+from collections import deque
+import os
+import threading
+import ssl
+import requests
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'ardpix-secret-key-change-me')
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Configurações
+MQTT_BROKER = os.getenv('MQTT_BROKER', '4d976cc55da74717896f08453a044a5b.s1.eu.hivemq.cloud')
+MQTT_PORT = int(os.getenv('MQTT_PORT', 8883))
+MQTT_USERNAME = os.getenv('MQTT_USERNAME', 'flash-dashboard')
+MQTT_PASSWORD = os.getenv('MQTT_PASSWORD', '#azy8R5VD0QE%Y')
+MQTT_USE_TLS = os.getenv('MQTT_USE_TLS', 'True').lower() == 'true'
+MQTT_TOPIC_VALUE_UPDATE = 'ardpix/value/update'
+MQTT_TOPIC_PIX_REQUEST = 'ardpix/pix/request'
+MQTT_TOPIC_PIX_RESPONSE = 'ardpix/pix/response'
+MQTT_TOPIC_STATUS = 'ardpix/status'
+
+# AbacatePay API
+ABACATEPAY_API_KEY = os.getenv('ABACATEPAY_API_KEY', 'abc_prod_06pQKYs0XTpZFnwBSk1MHtbf')
+ABACATEPAY_API_URL = 'https://api.abacatepay.com/v1'
+
+# Armazenamento de dados em memória
+payment_history = deque(maxlen=100)
+balance = {'total': 0.0, 'last_update': None}
+esp32_status = {
+    'connected': False,
+    'last_seen': None,
+    'current_value': 0.0
+}
+generated_pix = {}  # PIX gerados aguardando pagamento
+processed_requests = set()  # Cache de requisições já processadas
+
+# Cliente MQTT
+mqtt_client = mqtt.Client(client_id="flash-dashboard")
+
+def verify_abacate_signature(raw_body: str, signature_from_header: str) -> bool:
+    """Verifica a assinatura HMAC do webhook do AbacatePay"""
+    try:
+        expected_sig = hmac.new(
+            ABACATEPAY_PUBLIC_KEY.encode('utf-8'),
+            raw_body.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+
+        expected_b64 = hashlib.sha256(expected_sig).hexdigest()
+
+        # Comparação segura
+        return hmac.compare_digest(expected_b64, signature_from_header)
+    except Exception as e:
+        print(f"Erro na verificação de assinatura: {e}")
+        return False
+
+def on_mqtt_connect(client, userdata, flags, rc):
+    """Callback quando conecta ao MQTT"""
+    print(f"\n{'='*60}")
+    print(f"MQTT CONEXÃO ESTABELECIDA")
+    print(f"{'='*60}")
+    print(f"Return Code: {rc}")
+
+    if rc == 0:
+        print("✅ Conectado com sucesso ao MQTT broker")
+
+        # Limpar mensagens retidas antes de se inscrever
+        print("🧹 Limpando mensagens retidas...")
+        client.publish(MQTT_TOPIC_PIX_REQUEST, None, retain=True)
+        client.publish(MQTT_TOPIC_PIX_RESPONSE, None, retain=True)
+
+        print("📡 Inscrevendo em tópicos...")
+        client.subscribe(MQTT_TOPIC_STATUS)
+        print(f"   ✅ {MQTT_TOPIC_STATUS}")
+        client.subscribe(MQTT_TOPIC_VALUE_UPDATE)
+        print(f"   ✅ {MQTT_TOPIC_VALUE_UPDATE}")
+        client.subscribe(MQTT_TOPIC_PIX_REQUEST)
+        print(f"   ✅ {MQTT_TOPIC_PIX_REQUEST}")
+        print(f"{'='*60}\n")
+    else:
+        print(f"❌ Falha ao conectar. Código de retorno: {rc}")
+        print(f"{'='*60}\n")
+
+def on_mqtt_message(client, userdata, msg):
+    """Callback quando recebe mensagem MQTT"""
+    try:
+        payload_str = msg.payload.decode()
+        print(f"\n[MQTT DEBUG] Tópico: {msg.topic}")
+        print(f"[MQTT DEBUG] Payload: {payload_str}")
+
+        if not payload_str:
+            print("[MQTT DEBUG] Mensagem vazia, ignorando")
+            return
+
+        payload = json.loads(payload_str)
+
+        if msg.topic == MQTT_TOPIC_STATUS:
+            # Atualiza status do ESP32
+            esp32_status['connected'] = payload.get('connected', False)
+            esp32_status['last_seen'] = datetime.now().isoformat()
+            esp32_status['current_value'] = payload.get('current_value', 0.0)
+
+            def emit_status():
+                socketio.emit('esp32_status', esp32_status, namespace='/')
+                print(f"[WEBSOCKET] ✅ Emitido esp32_status")
+
+            socketio.start_background_task(emit_status)
+
+        elif msg.topic == MQTT_TOPIC_VALUE_UPDATE:
+            # Atualização de valor em tempo real
+            esp32_status['current_value'] = payload.get('value', 0.0)
+            esp32_status['last_seen'] = datetime.now().isoformat()
+
+            value_data = {'value': esp32_status['current_value']}
+
+            # Emitir usando background task para garantir que funcione
+            def emit_value():
+                socketio.emit('value_update', value_data, namespace='/')
+                print(f"[WEBSOCKET] ✅ Emitido value_update: {value_data}")
+
+            socketio.start_background_task(emit_value)
+            print(f"[VALOR] R$ {esp32_status['current_value']:.2f}")
+
+        elif msg.topic == MQTT_TOPIC_PIX_REQUEST:
+            # ESP32 solicitou geração de PIX
+            amount = payload.get('amount', 0.0)
+            timestamp = payload.get('timestamp', 0)
+
+            # Criar chave única para esta requisição
+            request_key = f"{amount}_{timestamp}"
+
+            # Verificar se já processamos esta requisição
+            if request_key in processed_requests:
+                print(f"[MQTT] Requisição duplicada ignorada: {request_key}")
+                return
+
+            # Adicionar ao cache (limitar tamanho)
+            processed_requests.add(request_key)
+            if len(processed_requests) > 100:
+                processed_requests.clear()
+
+            print(f"\n=== Requisição de PIX recebida ===")
+            print(f"Valor: R$ {amount:.2f}")
+            print(f"Request Key: {request_key}")
+
+            if amount > 0:
+                handle_pix_request_from_esp32(amount)
+            else:
+                print("Valor inválido, ignorando requisição")
+                send_pix_response(False, "Valor inválido")
+
+    except Exception as e:
+        print(f"\n❌ ERRO ao processar mensagem MQTT: {e}")
+        import traceback
+        traceback.print_exc()
+        print()
+
+# Configurar callbacks MQTT
+mqtt_client.on_connect = on_mqtt_connect
+mqtt_client.on_message = on_mqtt_message
+
+# Conectar ao broker MQTT em thread separada
+def connect_mqtt():
+    try:
+        print(f"\n{'='*60}")
+        print(f"INICIANDO CONEXÃO MQTT")
+        print(f"{'='*60}")
+        print(f"Broker: {MQTT_BROKER}")
+        print(f"Porta: {MQTT_PORT}")
+        print(f"Usuário: {MQTT_USERNAME}")
+        print(f"TLS: {MQTT_USE_TLS}")
+        print(f"{'='*60}\n")
+
+        # Configurar autenticação se fornecida
+        if MQTT_USERNAME and MQTT_PASSWORD:
+            mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+            print(f"✅ Autenticação MQTT configurada para usuário: {MQTT_USERNAME}")
+
+        # Configurar TLS/SSL se habilitado
+        if MQTT_USE_TLS:
+            mqtt_client.tls_set(cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLSv1_2)
+            mqtt_client.tls_insecure_set(False)
+            print("✅ TLS/SSL habilitado para MQTT")
+
+        print(f"\n🔄 Conectando ao broker: {MQTT_BROKER}:{MQTT_PORT}...")
+        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mqtt_client.loop_start()
+        print("✅ Cliente MQTT iniciado com sucesso!\n")
+    except Exception as e:
+        print(f"\n❌ ERRO ao conectar ao MQTT: {e}\n")
+        import traceback
+        traceback.print_exc()
+
+# Iniciar conexão MQTT
+threading.Thread(target=connect_mqtt, daemon=True).start()
+
+@app.route('/')
+def index():
+    """Página principal do dashboard"""
+    return render_template('index.html')
+
+@app.route('/admin')
+def admin():
+    """Página administrativa"""
+    return render_template('admin.html')
+
+@app.route('/webhook/abacatepay', methods=['POST'])
+def webhook_abacatepay():
+    """Endpoint para receber webhooks do AbacatePay"""
+
+    # Processar evento
+    event_data = request.json
+    event_type = event_data.get('event')
+
+    print(f"Webhook recebido: {event_type}")
+
+    if event_type == 'billing.paid':
+        # Processar pagamento confirmado
+        handle_payment_paid(event_data)
+
+    elif event_type == 'withdraw.done':
+        # Processar saque concluído
+        handle_withdraw_done(event_data)
+
+    elif event_type == 'withdraw.failed':
+        # Processar saque falho
+        handle_withdraw_failed(event_data)
+
+    return jsonify({'received': True}), 200
+
+def handle_payment_paid(event_data):
+    """Processa evento de pagamento confirmado"""
+    data = event_data.get('data', {})
+    payment = data.get('payment', {})
+    pix_qr_code = data.get('pixQrCode', {})
+
+    payment_info = {
+        'id': pix_qr_code.get('id'),
+        'amount': payment.get('amount') / 100,  # Converter de centavos para reais
+        'fee': payment.get('fee') / 100,
+        'method': payment.get('method'),
+        'status': pix_qr_code.get('status'),
+        'timestamp': datetime.now().isoformat(),
+        'dev_mode': event_data.get('devMode', False)
+    }
+
+    # Adicionar ao histórico
+    payment_history.append(payment_info)
+
+    # Atualizar saldo
+    balance['total'] += payment_info['amount'] - payment_info['fee']
+    balance['last_update'] = payment_info['timestamp']
+
+    # Adicionar à fila para processar no ESP32
+    queue_item = {
+        'type': 'payment',
+        'payment_id': payment_info['id'],
+        'amount': payment_info['amount'],
+        'timestamp': payment_info['timestamp']
+    }
+    payment_queue.append(queue_item)
+
+    # Publicar no MQTT para ESP32 processar
+    mqtt_client.publish(
+        MQTT_TOPIC_PAYMENT,
+        json.dumps(queue_item),
+        qos=1  # Garantir entrega
+    )
+
+    print(f"Pagamento recebido: R$ {payment_info['amount']:.2f}")
+
+    # Emitir evento via WebSocket para atualizar dashboard em tempo real
+    with app.app_context():
+        socketio.emit('new_payment', payment_info, namespace='/')
+        socketio.emit('balance_update', balance, namespace='/')
+
+def handle_withdraw_done(event_data):
+    """Processa evento de saque concluído"""
+    data = event_data.get('data', {})
+    transaction = data.get('transaction', {})
+
+    withdraw_info = {
+        'id': transaction.get('id'),
+        'amount': transaction.get('amount') / 100,
+        'fee': transaction.get('platformFee') / 100,
+        'status': 'completed',
+        'timestamp': datetime.now().isoformat()
+    }
+
+    # Atualizar saldo
+    balance['total'] -= withdraw_info['amount']
+    balance['last_update'] = withdraw_info['timestamp']
+
+    print(f"Saque concluído: R$ {withdraw_info['amount']:.2f}")
+
+    socketio.emit('withdraw_update', withdraw_info, namespace='/')
+    socketio.emit('balance_update', balance, namespace='/')
+
+def handle_withdraw_failed(event_data):
+    """Processa evento de saque falho"""
+    data = event_data.get('data', {})
+    transaction = data.get('transaction', {})
+
+    withdraw_info = {
+        'id': transaction.get('id'),
+        'amount': transaction.get('amount') / 100,
+        'status': 'failed',
+        'timestamp': datetime.now().isoformat()
+    }
+
+    print(f"Saque falhou: R$ {withdraw_info['amount']:.2f}")
+
+    socketio.emit('withdraw_update', withdraw_info, namespace='/')
+
+def handle_pix_request_from_esp32(amount):
+    """Processa requisição de PIX do ESP32 e gera QR Code"""
+    try:
+        # Converter valor de reais para centavos
+        amount_cents = int(amount * 100)
+
+        # Preparar payload para API do AbacatePay
+        payload = {
+            'amount': amount_cents,
+            'description': f'Pagamento ArdPix - R$ {amount:.2f}',
+            'expiresIn': 3600
+        }
+
+        # Fazer requisição para API do AbacatePay
+        headers = {
+            'Authorization': f'Bearer {ABACATEPAY_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(
+            f'{ABACATEPAY_API_URL}/pixQrCode/create',
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code in [200, 201]:
+            result = response.json()
+            data = result.get('data', {})
+
+            payment_data = {
+                'id': data.get('id'),
+                'amount': amount,
+                'qrCodeBase64': data.get('brCodeBase64'),
+                'brCode': data.get('brCode'),
+                'expiresAt': data.get('expiresAt'),
+                'status': data.get('status'),
+                'createdAt': data.get('createdAt', datetime.now().isoformat())
+            }
+
+            # Armazenar PIX gerado
+            generated_pix[payment_data['id']] = payment_data
+
+            print(f"PIX gerado com sucesso: {payment_data['id']}")
+
+            # Enviar resposta ao ESP32
+            send_pix_response(True, "PIX gerado com sucesso", payment_data)
+
+            # Emitir para dashboard via WebSocket
+            def emit_pix():
+                socketio.emit('pix_generated', payment_data, namespace='/')
+                print(f"[WEBSOCKET] ✅ Emitido pix_generated: R$ {payment_data['amount']:.2f}")
+
+            socketio.start_background_task(emit_pix)
+
+        else:
+            error_msg = response.json().get('error', 'Erro ao criar pagamento')
+            print(f"Erro ao gerar PIX: {response.status_code} - {error_msg}")
+            send_pix_response(False, error_msg)
+
+    except requests.exceptions.RequestException as e:
+        print(f"Erro de conexão com AbacatePay API: {e}")
+        send_pix_response(False, "Erro de conexão com API")
+    except Exception as e:
+        print(f"Erro ao processar requisição de PIX: {e}")
+        send_pix_response(False, str(e))
+
+def send_pix_response(success, message="", payment_data=None):
+    """Envia resposta ao ESP32 sobre geração de PIX"""
+    response = {
+        'success': success,
+        'message': message,
+        'timestamp': datetime.now().isoformat()
+    }
+
+    if payment_data:
+        response['payment_id'] = payment_data.get('id')
+        response['amount'] = payment_data.get('amount')
+
+    mqtt_client.publish(MQTT_TOPIC_PIX_RESPONSE, json.dumps(response), qos=0, retain=False)
+    print(f"Resposta PIX enviada ao ESP32: {response}")
+
+@app.route('/api/balance', methods=['GET'])
+def get_balance():
+    """Retorna saldo atual"""
+    return jsonify(balance)
+
+@app.route('/api/payments', methods=['GET'])
+def get_payments():
+    """Retorna histórico de pagamentos"""
+    return jsonify(list(payment_history))
+
+@app.route('/api/esp32/status', methods=['GET'])
+def get_esp32_status():
+    """Retorna status do ESP32"""
+    return jsonify(esp32_status)
+
+@app.route('/api/current-value', methods=['GET'])
+def get_current_value():
+    """Retorna valor atual sendo digitado no ESP32"""
+    return jsonify({
+        'value': esp32_status.get('current_value', 0.0),
+        'connected': esp32_status.get('connected', False)
+    })
+
+@app.route('/api/generated-pix', methods=['GET'])
+def get_generated_pix():
+    """Retorna PIX gerados"""
+    return jsonify(list(generated_pix.values()))
+
+@app.route('/api/create-pix-payment', methods=['POST'])
+def create_pix_payment():
+    """Cria um novo pagamento PIX via AbacatePay"""
+    try:
+        data = request.json
+        amount = data.get('amount')  # Valor em reais
+        description = data.get('description', 'Pagamento ArdPix')
+        expires_in = data.get('expiresIn', 3600)  # 1 hora por padrão
+
+        if not amount or amount <= 0:
+            return jsonify({'error': 'Valor inválido'}), 400
+
+        # Converter valor de reais para centavos
+        amount_cents = int(amount * 100)
+
+        # Preparar payload para API do AbacatePay
+        payload = {
+            'amount': amount_cents,
+            'description': description,
+            'expiresIn': expires_in
+        }
+
+        # Fazer requisição para API do AbacatePay
+        headers = {
+            'Authorization': f'Bearer {ABACATEPAY_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(
+            f'{ABACATEPAY_API_URL}/pixQrCode/create',
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code == 201 or response.status_code == 200:
+            result = response.json()
+            print(f"Resposta da API AbacatePay: {result}")  # Log para debug
+
+            # A resposta vem dentro do objeto 'data'
+            data = result.get('data', {})
+
+            payment_data = {
+                'id': data.get('id'),
+                'amount': amount,
+                'qrCodeBase64': data.get('brCodeBase64'),  # Nome correto do campo
+                'brCode': data.get('brCode'),
+                'expiresAt': data.get('expiresAt'),
+                'status': data.get('status'),
+                'createdAt': data.get('createdAt', datetime.now().isoformat())
+            }
+
+            print(f"Pagamento PIX criado: {payment_data['id']} - R$ {amount:.2f}")
+
+            return jsonify(payment_data), 201
+        else:
+            result = response.json()
+            error_msg = result.get('error', 'Erro ao criar pagamento')
+            print(f"Erro ao criar pagamento PIX: {response.status_code} - {error_msg}")
+            return jsonify({'error': error_msg}), response.status_code
+
+    except requests.exceptions.RequestException as e:
+        print(f"Erro de conexão com AbacatePay API: {e}")
+        return jsonify({'error': 'Erro de conexão com API de pagamentos'}), 500
+    except Exception as e:
+        print(f"Erro ao criar pagamento: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@socketio.on('connect')
+def handle_connect():
+    """Cliente WebSocket conectou"""
+    print('Cliente conectado via WebSocket')
+    # Enviar estado atual
+    emit('balance_update', balance)
+    emit('esp32_status', esp32_status)
+    # Enviar valor atual do display
+    emit('value_update', {'value': esp32_status.get('current_value', 0.0)})
+    print(f"[WEBSOCKET] Enviando valor inicial: {esp32_status.get('current_value', 0.0)}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Cliente WebSocket desconectou"""
+    print('Cliente desconectado do WebSocket')
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=8080, debug=True)

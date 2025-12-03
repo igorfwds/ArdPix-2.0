@@ -3,143 +3,116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ArdPix - Dashboard de Pagamentos</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <!-- Chart.js desabilitado temporariamente para performance -->
-    <!-- <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> -->
+    <title>ArdPix Display</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        .container { text-align: center; }
+        .label { font-size: 2rem; color: #666; margin-bottom: 20px; }
+        .value { font-size: 8rem; font-weight: bold; text-shadow: 0 0 20px #fff; }
+        
+        #pix-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        #qr-box {
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #qr-image { width: 300px; height: 300px; object-fit: contain; }
+        .amount-display { font-size: 3rem; margin-bottom: 20px; color: #fff; }
+        
+        .btn-close {
+            padding: 15px 40px; font-size: 1.2rem; cursor: pointer;
+            background: #fff; border: none; border-radius: 5px; margin-top: 20px; font-weight: bold;
+        }
+        
+        /* Botão Admin Discreto */
+        .admin-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: #333;
+            text-decoration: none;
+            border: 1px solid #333;
+            padding: 5px 10px;
+            font-size: 12px;
+            transition: 0.3s;
+        }
+        .admin-btn:hover {
+            color: #fff;
+            border-color: #fff;
+        }
+    </style>
 </head>
 <body>
+
     <div class="container">
-        <header>
-            <h1>ArdPix - Sistema de Pagamentos IoT</h1>
-            <p class="subtitle">Dashboard em Tempo Real</p>
-        </header>
-
-        <div class="status-bar">
-            <div class="status-item">
-                <span class="label">Status ESP32:</span>
-                <span id="esp32-status" class="status-badge disconnected">Desconectado</span>
-            </div>
-            <div class="status-item">
-                <span class="label">Última atualização:</span>
-                <span id="last-update">-</span>
-            </div>
-            <div class="status-item">
-                <span class="label">Fila ESP32:</span>
-                <span id="queue-size" class="badge">0</span>
-            </div>
-        </div>
-
-        <div class="grid">
-            <!-- Card de Criar Pagamento PIX -->
-            <div class="card create-payment-card">
-                <h2>Criar Pagamento PIX</h2>
-                <form id="create-payment-form">
-                    <div class="form-group">
-                        <label for="payment-amount">Valor (R$):</label>
-                        <input type="number" id="payment-amount" name="amount" min="0.01" step="0.01" required placeholder="10.00">
-                    </div>
-                    <div class="form-group">
-                        <label for="payment-description">Descrição (opcional):</label>
-                        <input type="text" id="payment-description" name="description" maxlength="140" placeholder="Produto/Serviço">
-                    </div>
-                    <button type="submit" class="btn btn-primary" id="create-payment-btn">Gerar QR Code PIX</button>
-                </form>
-                <div id="payment-loading" class="loading" style="display: none;">
-                    <div class="spinner"></div>
-                    <p>Gerando pagamento...</p>
-                </div>
-            </div>
-
-            <!-- Card de Saldo -->
-            <div class="card balance-card">
-                <h2>Saldo Disponível</h2>
-                <div class="balance-amount" id="balance-amount">R$ 0,00</div>
-                <div class="balance-info">
-                    <span>Última atualização: <span id="balance-update">-</span></span>
-                </div>
-            </div>
-
-            <!-- Card de Estatísticas -->
-            <div class="card stats-card">
-                <h2>Estatísticas</h2>
-                <div class="stat-item">
-                    <span class="stat-label">Total de Transações:</span>
-                    <span class="stat-value" id="total-transactions">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Pagamentos Hoje:</span>
-                    <span class="stat-value" id="payments-today">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Valor Total Hoje:</span>
-                    <span class="stat-value" id="total-today">R$ 0,00</span>
-                </div>
-            </div>
-
-            <!-- Gráfico de Pagamentos (DESABILITADO TEMPORARIAMENTE) -->
-            <div class="card chart-card" style="display: none;">
-                <h2>Pagamentos Recentes</h2>
-                <canvas id="paymentsChart"></canvas>
-            </div>
-
-            <!-- Histórico de Transações -->
-            <div class="card transactions-card">
-                <h2>Últimas Transações</h2>
-                <div class="transaction-list" id="transaction-list">
-                    <p class="empty-state">Nenhuma transação ainda...</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Notificações -->
-        <div id="notification-container"></div>
-
-        <!-- Modal QR Code PIX -->
-        <div id="qrcode-modal" class="modal" style="display: none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2>QR Code PIX Gerado</h2>
-                    <span class="close-modal" onclick="closeQRCodeModal()">&times;</span>
-                </div>
-                <div class="modal-body">
-                    <div class="qrcode-container">
-                        <img id="qrcode-image" src="" alt="QR Code PIX">
-                    </div>
-                    <div class="payment-details">
-                        <div class="detail-item">
-                            <span class="detail-label">Valor:</span>
-                            <span class="detail-value" id="qr-amount">R$ 0,00</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">ID do Pagamento:</span>
-                            <span class="detail-value" id="qr-payment-id">-</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">Expira em:</span>
-                            <span class="detail-value" id="qr-expires-at">-</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">Status:</span>
-                            <span class="detail-value status-badge" id="qr-status">AGUARDANDO</span>
-                        </div>
-                    </div>
-                    <div class="brcode-container">
-                        <label>Código PIX Copia e Cola:</label>
-                        <div class="brcode-box">
-                            <input type="text" id="brcode-text" readonly>
-                            <button class="btn btn-secondary" onclick="copyBRCode()">Copiar</button>
-                        </div>
-                    </div>
-                    <div class="modal-actions">
-                        <button class="btn btn-primary" onclick="closeQRCodeModal()">Fechar</button>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <div class="label">TOTAL A PAGAR</div>
+        <div class="value" id="display-value">R$ 0,00</div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    <a href="/admin" class="admin-btn">ADMIN</a>
+
+    <div id="pix-modal">
+        <div class="amount-display" id="modal-amount">R$ 0,00</div>
+        <div id="qr-box">
+            <img id="qr-image" src="" alt="Aguardando QR Code...">
+        </div>
+        <div style="color: #aaa; margin-top: 10px;">Escaneie para pagar</div>
+        <button class="btn-close" onclick="closeModal()">FECHAR</button>
+    </div>
+
+    <script>
+        const socket = io();
+        const displayEl = document.getElementById('display-value');
+        const modalEl = document.getElementById('pix-modal');
+        const modalAmountEl = document.getElementById('modal-amount');
+        const qrImageEl = document.getElementById('qr-image');
+
+        const formatMoney = (val) => parseFloat(val).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+        socket.on('value_update', (data) => {
+            displayEl.textContent = formatMoney(data.value);
+        });
+
+        socket.on('pix_generated', (data) => {
+            modalAmountEl.textContent = formatMoney(data.amount);
+            if (data.qrCodeBase64) qrImageEl.src = data.qrCodeBase64;
+            modalEl.style.display = 'flex';
+        });
+
+        function closeModal() {
+            modalEl.style.display = 'none';
+            qrImageEl.src = ""; 
+        }
+
+        // Carregar valor inicial
+        fetch('/api/current-value')
+            .then(r => r.json())
+            .then(data => displayEl.textContent = formatMoney(data.current_value));
+    </script>
 </body>
 </html>

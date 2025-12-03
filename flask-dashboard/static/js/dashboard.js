@@ -19,7 +19,10 @@ const balanceAmount = document.getElementById('balance-amount');
 const balanceUpdate = document.getElementById('balance-update');
 const esp32Status = document.getElementById('esp32-status');
 const lastUpdate = document.getElementById('last-update');
-const queueSize = document.getElementById('queue-size');
+const currentValue = document.getElementById('current-value');
+const currentMode = document.getElementById('current-mode');
+const esp32ValueDisplay = document.getElementById('esp32-value-display');
+const esp32ModeDisplay = document.getElementById('esp32-mode-display');
 const totalTransactions = document.getElementById('total-transactions');
 const paymentsToday = document.getElementById('payments-today');
 const totalToday = document.getElementById('total-today');
@@ -138,7 +141,28 @@ function updateESP32Status(status) {
     }
 
     lastUpdate.textContent = formatDateTime(status.last_seen);
-    queueSize.textContent = status.queue_size || 0;
+
+    if (status.current_value !== undefined) {
+        updateCurrentValue(status.current_value, status.mode);
+    }
+}
+
+// Atualizar valor atual do ESP32
+function updateCurrentValue(value, mode) {
+    const formattedValue = formatCurrency(value);
+
+    currentValue.textContent = formattedValue;
+    esp32ValueDisplay.textContent = formattedValue;
+
+    const modeText = mode === 'increment' ? 'INCREMENTAR' : 'DECREMENTAR';
+    currentMode.textContent = modeText;
+    esp32ModeDisplay.textContent = modeText;
+
+    if (mode === 'increment') {
+        esp32ModeDisplay.className = 'mode-badge increment';
+    } else {
+        esp32ModeDisplay.className = 'mode-badge decrement';
+    }
 }
 
 // Adicionar transação à lista (OTIMIZADO)
@@ -366,6 +390,23 @@ socket.on('withdraw_update', (withdraw) => {
             'error'
         );
     }
+});
+
+// Atualização de valor em tempo real do ESP32
+socket.on('value_update', (data) => {
+    updateCurrentValue(data.value, data.mode);
+});
+
+// PIX gerado pelo ESP32
+socket.on('pix_generated', (paymentData) => {
+    showNotification(
+        'PIX Gerado pelo ESP32!',
+        `Valor: ${formatCurrency(paymentData.amount)}`,
+        'success'
+    );
+
+    // Mostrar modal automaticamente com o QR Code
+    showQRCodeModal(paymentData);
 });
 
 // Criar pagamento PIX
